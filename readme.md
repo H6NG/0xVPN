@@ -6,6 +6,14 @@ A simple self-hosted VPN over UDP with AES-256-GCM encryption.
 
 ## Server setup (Linux VPS)
 
+First SSH into your VPS:
+
+```bash
+ssh root@YOUR_VPS_IP
+```
+
+Then run the installer:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-linux.sh | bash
 ```
@@ -17,7 +25,7 @@ cd /opt/0xvpn
 ./venv/bin/python3 setup/cli.py start --config configs/server.toml
 ```
 
-Get your shared key:
+Get your shared key (you'll need it on the client):
 
 ```bash
 grep shared_key /opt/0xvpn/configs/server.toml
@@ -36,7 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-macos
 Then connect:
 
 ```bash
-0xvpn connect
+cd ~/Downloads/0xVPN/setup
+sudo ./venv/bin/python3 cli.py connect
 ```
 
 ### Linux
@@ -48,6 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-linux
 Then connect:
 
 ```bash
+cd ~/Downloads/0xVPN/setup
 sudo ./venv/bin/python3 cli.py connect
 ```
 
@@ -63,6 +73,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 Then connect:
 
 ```powershell
+cd Downloads\0xVPN\setup
 python cli.py connect
 ```
 
@@ -73,9 +84,9 @@ python cli.py connect
 ## Commands
 
 ```bash
-0xvpn connect      # connect to VPN
-0xvpn disconnect   # disconnect
-0xvpn status       # check status
+sudo ./venv/bin/python3 cli.py connect      # connect to VPN
+sudo ./venv/bin/python3 cli.py disconnect   # disconnect
+sudo ./venv/bin/python3 cli.py status       # check status
 ```
 
 ---
