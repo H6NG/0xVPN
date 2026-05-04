@@ -78,7 +78,7 @@ install_0xvpn() {
 
     cd "$INSTALL_DIR"
     python3 -m venv venv
-    ./venv/bin/pip install -r requirements.txt -q
+    ./venv/bin/pip install -r setup/requirements.txt -q
 
     log "0xVPN installed at $INSTALL_DIR"
 }
