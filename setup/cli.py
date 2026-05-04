@@ -89,6 +89,11 @@ def _open_tun_linux(name: str = "tun0") -> TunDevice:
 
 def _open_tun_macos(index: int = 0) -> TunDevice:
     """Open a utun device on macOS via PF_SYSTEM control socket."""
+    import ctypes
+    import ctypes.util
+
+    # Use /dev/utun via subprocess as a fallback-friendly approach
+    # Connect via the control socket using the correct Python API
     sock = socket.socket(AF_SYSTEM, socket.SOCK_DGRAM, SYSPROTO_CONTROL)
 
     ctl_name = b"com.apple.net.utun_control"
@@ -97,12 +102,8 @@ def _open_tun_macos(index: int = 0) -> TunDevice:
     buf = fcntl.ioctl(sock.fileno(), CTLIOCGINFO, bytes(buf))
     ctl_id = struct.unpack_from("I", buf, 0)[0]
 
-    sa = struct.pack("BBHII5I",
-        32, AF_SYSTEM, AF_SYS_CONTROL,
-        ctl_id, index + 1,
-        0, 0, 0, 0, 0,
-    )
-    sock.connect(sa)
+    # Python's PF_SYSTEM socket expects (ctl_id, unit) tuple
+    sock.connect((ctl_id, index + 1))
 
     iface = sock.getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME, 64)
     iface = iface.rstrip(b"\x00").decode()
