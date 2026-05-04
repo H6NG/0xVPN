@@ -17,24 +17,7 @@ cd /opt/0xvpn
 ./venv/bin/python3 setup/cli.py start --config configs/server.toml
 ```
 
----
-
-## Client setup (macOS)
-
-```bash
-cd your-project-folder
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-```
-
-Connect:
-
-```bash
-sudo ./venv/bin/python3 cli.py connect
-```
-
-First time it will ask for your VPS IP, port, and shared key.  
-Get the shared key from your server:
+Get your shared key:
 
 ```bash
 grep shared_key /opt/0xvpn/configs/server.toml
@@ -42,24 +25,71 @@ grep shared_key /opt/0xvpn/configs/server.toml
 
 ---
 
+## Client setup
+
+### macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-macos.sh | bash
+```
+
+Then connect:
+
+```bash
+0xvpn connect
+```
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-linux.sh | bash
+```
+
+Then connect:
+
+```bash
+sudo ./venv/bin/python3 cli.py connect
+```
+
+### Windows
+
+Run as Administrator in PowerShell:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\install-windows.ps1
+```
+
+Then connect:
+
+```powershell
+python cli.py connect
+```
+
+> **Note:** Windows requires the [Wintun driver](https://www.wintun.net) and `pip install wintun`.
+
+---
+
 ## Commands
 
 ```bash
-sudo ./venv/bin/python3 cli.py connect      # connect
-sudo ./venv/bin/python3 cli.py disconnect   # disconnect
-sudo ./venv/bin/python3 cli.py status       # check status
+0xvpn connect      # connect to VPN
+0xvpn disconnect   # disconnect
+0xvpn status       # check status
+```
+
+---
+
+## Check your current IP address
+
+```bash
+curl ifconfig.me
 ```
 
 ---
 
 ## Notes
 
-- Requires sudo (TUN interface needs root)
+- Requires sudo/admin (TUN interface needs root)
 - DNS is set automatically on connect and restored on disconnect
 - Hit Ctrl+C to disconnect
-
---- 
-
-## Check your current IP address
-
-`curl ifconfig.me`
