@@ -86,7 +86,7 @@ install_0xvpn() {
 install_alias() {
     section "Setting up CLI"
 
-    ALIAS_CMD="alias 0xvpn='sudo $INSTALL_DIR/venv/bin/python $INSTALL_DIR/cli.py'"
+    ALIAS_CMD="alias 0xvpn='sudo $INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/setup/cli.py'"
 
     if [ -f "$HOME/.zshrc" ]; then
         if ! grep -q "alias 0xvpn=" "$HOME/.zshrc"; then
