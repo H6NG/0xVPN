@@ -72,7 +72,7 @@ class TunDevice:
 
     def read(self) -> bytes:
         raw = os.read(self.fd, 65536)
-        return raw[4:] if self._macos else raw  # strip 4-byte AF header on utun
+        return raw[4:] if self._macos else raw
 
     def write(self, pkt: bytes) -> None:
         if self._macos:
@@ -89,11 +89,6 @@ def _open_tun_linux(name: str = "tun0") -> TunDevice:
 
 def _open_tun_macos(index: int = 0) -> TunDevice:
     """Open a utun device on macOS via PF_SYSTEM control socket."""
-    import ctypes
-    import ctypes.util
-
-    # Use /dev/utun via subprocess as a fallback-friendly approach
-    # Connect via the control socket using the correct Python API
     sock = socket.socket(AF_SYSTEM, socket.SOCK_DGRAM, SYSPROTO_CONTROL)
 
     ctl_name = b"com.apple.net.utun_control"
@@ -102,12 +97,26 @@ def _open_tun_macos(index: int = 0) -> TunDevice:
     buf = fcntl.ioctl(sock.fileno(), CTLIOCGINFO, bytes(buf))
     ctl_id = struct.unpack_from("I", buf, 0)[0]
 
-    # Python's PF_SYSTEM socket expects (ctl_id, unit) tuple
     sock.connect((ctl_id, index + 1))
 
     iface = sock.getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME, 64)
     iface = iface.rstrip(b"\x00").decode()
     return TunDevice(sock.detach(), iface, macos=True)
+
+
+def _open_tun_windows(name: str = "0xVPN") -> TunDevice:
+    """Open a Wintun TUN device on Windows."""
+    try:
+        import wintun
+    except ImportError:
+        raise RuntimeError(
+            "Wintun not found. Install it: pip install wintun\n"
+            "Also requires the Wintun driver: https://www.wintun.net"
+        )
+    adapter = wintun.Adapter(name, "0xVPN")
+    session = adapter.start_session(0x400000)
+    fd = session.fileno()
+    return TunDevice(fd, name)
 
 
 def open_tun(name: str = "tun0") -> TunDevice:
@@ -120,11 +129,13 @@ def open_tun(name: str = "tun0") -> TunDevice:
             except OSError:
                 continue
         raise RuntimeError("No free utun device available")
+    if sys.platform == "win32":
+        return _open_tun_windows(name)
     raise NotImplementedError(f"TUN not supported on {sys.platform}")
 
 
 def configure_tun(dev: TunDevice, address: str) -> str:
-    """Assign CIDR address to the TUN device and bring it up. Returns network CIDR."""
+    """Assign CIDR address to the TUN device and bring it up."""
     net = ipaddress.ip_interface(address)
 
     if sys.platform == "linux":
@@ -147,7 +158,197 @@ def configure_tun(dev: TunDevice, address: str) -> str:
             check=True,
         )
 
+    elif sys.platform == "win32":
+        subprocess.run(
+            ["netsh", "interface", "ip", "set", "address", dev.name,
+             "static", str(net.ip), str(net.netmask)],
+            check=True,
+        )
+        subprocess.run(
+            ["netsh", "interface", "ipv4", "set", "subinterface", dev.name,
+             "mtu=1420", "store=persistent"],
+            check=False,
+        )
+
     return str(net.network)
+
+
+# ── DNS helpers ───────────────────────────────────────────────────────────────
+
+def _get_default_interface_linux() -> str:
+    """Return the default network interface name on Linux."""
+    r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if "dev" in parts:
+            return parts[parts.index("dev") + 1]
+    return "eth0"
+
+
+def save_and_set_dns(dns_servers: list) -> dict:
+    """Save current DNS config and set new servers. Returns state for restore."""
+    state = {"platform": sys.platform}
+
+    if sys.platform == "darwin":
+        r = subprocess.run(
+            ["networksetup", "-getdnsservers", "Wi-Fi"],
+            capture_output=True, text=True,
+        )
+        out = r.stdout.strip()
+        state["original"] = [] if "There aren't any" in out else out.splitlines()
+        subprocess.run(
+            ["networksetup", "-setdnsservers", "Wi-Fi"] + dns_servers,
+            check=False,
+        )
+
+    elif sys.platform == "linux":
+        resolv = Path("/etc/resolv.conf")
+        state["original"] = resolv.read_text() if resolv.exists() else ""
+        lines = [f"nameserver {s}" for s in dns_servers]
+        resolv.write_text("\n".join(lines) + "\n")
+
+    elif sys.platform == "win32":
+        iface = _get_default_interface_linux()
+        r = subprocess.run(
+            ["netsh", "interface", "ipv4", "show", "dns", iface],
+            capture_output=True, text=True,
+        )
+        state["original"] = r.stdout
+        state["iface"]    = iface
+        subprocess.run(
+            ["netsh", "interface", "ipv4", "set", "dns", iface,
+             "static", dns_servers[0]],
+            check=False,
+        )
+        for s in dns_servers[1:]:
+            subprocess.run(
+                ["netsh", "interface", "ipv4", "add", "dns", iface, s, "index=2"],
+                check=False,
+            )
+
+    click.echo(f"[0xVPN] DNS set to {' '.join(dns_servers)}")
+    return state
+
+
+def restore_dns(state: dict) -> None:
+    """Restore DNS to original settings."""
+    if not state:
+        return
+    click.echo("[0xVPN] restoring DNS...")
+
+    if state["platform"] == "darwin":
+        original = state.get("original", [])
+        if original:
+            subprocess.run(
+                ["networksetup", "-setdnsservers", "Wi-Fi"] + original,
+                check=False,
+            )
+        else:
+            subprocess.run(
+                ["networksetup", "-setdnsservers", "Wi-Fi", "empty"],
+                check=False,
+            )
+
+    elif state["platform"] == "linux":
+        Path("/etc/resolv.conf").write_text(state.get("original", ""))
+
+    elif state["platform"] == "win32":
+        iface = state.get("iface", "")
+        subprocess.run(
+            ["netsh", "interface", "ipv4", "set", "dns", iface, "dhcp"],
+            check=False,
+        )
+
+
+# ── routing helpers ───────────────────────────────────────────────────────────
+
+def setup_routes(gateway: str, host: str) -> dict:
+    """Add routes to send all traffic through VPN. Returns state for restore."""
+    state = {"platform": sys.platform, "host": host}
+
+    if sys.platform == "linux":
+        # Save original default route
+        r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
+        state["original_route"] = r.stdout.strip()
+        # Add direct route to VPS before changing default
+        iface = _get_default_interface_linux()
+        gw_r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
+        orig_gw = None
+        for part in gw_r.stdout.split():
+            if orig_gw is None and "via" in gw_r.stdout:
+                parts = gw_r.stdout.split()
+                if "via" in parts:
+                    orig_gw = parts[parts.index("via") + 1]
+                break
+        if orig_gw:
+            subprocess.run(["ip", "route", "add", host, "via", orig_gw], check=False)
+            state["orig_gw"] = orig_gw
+        subprocess.run(["ip", "route", "replace", "default", "via", gateway], check=False)
+        click.echo(f"[0xVPN] Linux routes configured via {gateway}")
+
+    elif sys.platform == "darwin":
+        # Save original gateway
+        r = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True)
+        orig_gw = None
+        for line in r.stdout.splitlines():
+            if "gateway:" in line:
+                orig_gw = line.split("gateway:")[1].strip()
+                break
+        state["orig_gw"] = orig_gw
+        click.echo(f"[0xVPN] original gateway: {orig_gw}")
+
+        subprocess.run(["route", "-n", "add", "-net", "0.0.0.0/1",   gateway], check=False)
+        subprocess.run(["route", "-n", "add", "-net", "128.0.0.0/1", gateway], check=False)
+        if orig_gw:
+            subprocess.run(["route", "-n", "add", "-host", host, orig_gw], check=False)
+        click.echo(f"[0xVPN] macOS routes configured via {gateway}")
+
+    elif sys.platform == "win32":
+        # Save original default gateway
+        r = subprocess.run(["route", "print", "0.0.0.0"], capture_output=True, text=True)
+        state["original_route"] = r.stdout
+        orig_gw = None
+        for line in r.stdout.splitlines():
+            if "0.0.0.0" in line and "0.0.0.0" in line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    orig_gw = parts[2]
+                    break
+        if orig_gw:
+            subprocess.run(["route", "add", host, orig_gw], check=False)
+            state["orig_gw"] = orig_gw
+        subprocess.run(["route", "add", "0.0.0.0", "mask", "0.0.0.0", gateway], check=False)
+        click.echo(f"[0xVPN] Windows routes configured via {gateway}")
+
+    return state
+
+
+def restore_routes(state: dict) -> None:
+    """Remove VPN routes and restore originals."""
+    if not state:
+        return
+    click.echo("[0xVPN] restoring routes...")
+    host = state.get("host", "")
+
+    if state["platform"] == "linux":
+        subprocess.run(["ip", "route", "del", host], check=False)
+        orig = state.get("original_route", "")
+        if orig:
+            subprocess.run(["ip", "route", "replace"] + orig.split()[1:], check=False)
+
+    elif state["platform"] == "darwin":
+        subprocess.run(["route", "-n", "delete", "-net", "0.0.0.0/1"],   check=False)
+        subprocess.run(["route", "-n", "delete", "-net", "128.0.0.0/1"], check=False)
+        orig_gw = state.get("orig_gw")
+        if orig_gw:
+            subprocess.run(["route", "-n", "delete", "-host", host], check=False)
+
+    elif state["platform"] == "win32":
+        subprocess.run(["route", "delete", host], check=False)
+        subprocess.run(["route", "delete", "0.0.0.0", "mask", "0.0.0.0"], check=False)
+        orig_gw = state.get("orig_gw")
+        if orig_gw:
+            subprocess.run(["route", "add", "0.0.0.0", "mask", "0.0.0.0", orig_gw], check=False)
 
 
 # ── forwarding loops ──────────────────────────────────────────────────────────
@@ -264,23 +465,36 @@ def run_client(cfg: dict) -> None:
     key       = _derive_key(peer["shared_key"])
     addr      = iface["address"]
     host, raw_port = peer["endpoint"].rsplit(":", 1)
+
+    click.echo(f"[0xVPN] resolving {host}...")
     remote    = (socket.gethostbyname(host), int(raw_port))
+    click.echo(f"[0xVPN] resolved to {remote[0]}")
+
     route_all = peer.get("allowed_ips", "") == "0.0.0.0/0"
 
+    click.echo(f"[0xVPN] opening TUN device...")
     tun = open_tun("tun0")
-    configure_tun(tun, addr)
+    click.echo(f"[0xVPN] TUN opened: {tun.name}")
 
-    if route_all and sys.platform == "linux":
-        gateway = str(ipaddress.ip_interface(addr).network.network_address + 1)
-        subprocess.run(
-            ["ip", "route", "replace", "default", "via", gateway, "dev", tun.name],
-            check=True,
-        )
+    click.echo(f"[0xVPN] configuring TUN {addr}...")
+    configure_tun(tun, addr)
+    click.echo(f"[0xVPN] TUN configured")
+
+    gateway = str(ipaddress.ip_interface(addr).network.network_address + 1)
+    click.echo(f"[0xVPN] VPN gateway: {gateway}")
+
+    route_state = {}
+    dns_state   = {}
+
+    if route_all:
+        route_state = setup_routes(gateway, host)
+        dns_state   = save_and_set_dns(["1.1.1.1", "8.8.8.8"])
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", 0))
 
     click.echo(f"[0xVPN] connected  peer={host}:{raw_port}  local={addr}")
+    click.echo(f"[0xVPN] threads running — Ctrl+C to disconnect")
 
     stop = threading.Event()
 
@@ -303,6 +517,9 @@ def run_client(cfg: dict) -> None:
         pass
     finally:
         stop.set()
+        if route_all:
+            restore_routes(route_state)
+            restore_dns(dns_state)
         click.echo("\n[0xVPN] disconnected")
 
 
@@ -312,8 +529,8 @@ def interactive_setup(config_path: Path) -> None:
     """Prompt the user for server details and write a client.toml."""
     click.echo("\n[0xVPN] No config found. Let's set it up!\n")
 
-    server_ip = click.prompt("  VPS IP address")
-    port      = click.prompt("  Port", default="51820")
+    server_ip  = click.prompt("  VPS IP address")
+    port       = click.prompt("  Port", default="51820")
     shared_key = click.prompt("  Shared key (from your server's server.toml)")
     client_ip  = click.prompt("  Client VPN IP", default="10.0.0.2/24")
 
@@ -372,6 +589,8 @@ def disconnect() -> None:
     """Tear down the VPN tunnel."""
     if sys.platform == "linux":
         r = subprocess.run(["ip", "link", "del", "tun0"], capture_output=True)
+    elif sys.platform == "win32":
+        r = subprocess.run(["taskkill", "/F", "/IM", "python.exe"], capture_output=True)
     else:
         r = subprocess.run(["pkill", "-f", "cli.py connect"], capture_output=True)
     msg = "disconnected" if r.returncode == 0 else "not connected (or already disconnected)"
@@ -396,6 +615,11 @@ def status() -> None:
                 click.echo(f"  {u}")
         else:
             click.echo("[0xVPN] not connected")
+    elif sys.platform == "win32":
+        r = subprocess.run(["netsh", "interface", "show", "interface", "0xVPN"],
+                           capture_output=True, text=True)
+        connected = "Connected" in r.stdout
+        click.echo(f"[0xVPN] {'connected' if connected else 'not connected'}")
     else:
         click.echo(f"[0xVPN] status not supported on {sys.platform}")
 
