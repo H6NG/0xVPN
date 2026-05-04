@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Optional
 
 import click
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -48,7 +49,7 @@ def encrypt(key: bytes, plaintext: bytes) -> bytes:
     return nonce + AESGCM(key).encrypt(nonce, plaintext, None)
 
 
-def decrypt(key: bytes, data: bytes) -> bytes | None:
+def decrypt(key: bytes, data: bytes) -> Optional[bytes]:
     if len(data) < 13:
         return None
     try:
@@ -90,14 +91,12 @@ def _open_tun_macos(index: int = 0) -> TunDevice:
     """Open a utun device on macOS via PF_SYSTEM control socket."""
     sock = socket.socket(AF_SYSTEM, socket.SOCK_DGRAM, SYSPROTO_CONTROL)
 
-    # Resolve "com.apple.net.utun_control" → numeric control ID
     ctl_name = b"com.apple.net.utun_control"
     buf = bytearray(4 + 256)
     buf[4:4 + len(ctl_name)] = ctl_name
     buf = fcntl.ioctl(sock.fileno(), CTLIOCGINFO, bytes(buf))
     ctl_id = struct.unpack_from("I", buf, 0)[0]
 
-    # struct sockaddr_ctl: sc_len(B) sc_family(B) ss_sysaddr(H) sc_id(I) sc_unit(I) sc_reserved[5](I)
     sa = struct.pack("BBHII5I",
         32, AF_SYSTEM, AF_SYS_CONTROL,
         ctl_id, index + 1,
@@ -132,7 +131,6 @@ def configure_tun(dev: TunDevice, address: str) -> str:
         subprocess.run(["ip", "link", "set", dev.name, "up", "mtu", "1420"], check=True)
 
     elif sys.platform == "darwin":
-        # utun uses point-to-point addressing
         local_ip = str(net.ip)
         peer_ip  = str(
             net.network.network_address + 1
@@ -157,7 +155,7 @@ def _tun_to_udp(
     tun: TunDevice,
     sock: socket.socket,
     key: bytes,
-    get_remote,         # (pkt) -> tuple | None
+    get_remote,
     stop: threading.Event,
 ) -> None:
     while not stop.is_set():
@@ -181,7 +179,7 @@ def _udp_to_tun(
     tun: TunDevice,
     sock: socket.socket,
     key: bytes,
-    on_receive,         # (src_addr, pkt) -> None
+    on_receive,
     stop: threading.Event,
 ) -> None:
     while not stop.is_set():
@@ -213,7 +211,6 @@ def run_server(cfg: dict) -> None:
     tun     = open_tun("tun0")
     network = configure_tun(tun, addr)
 
-    # NAT so clients can reach the internet through the server
     out_iface = iface.get("out_iface", "eth0")
     subprocess.run(
         ["iptables", "-t", "nat", "-A", "POSTROUTING",
@@ -226,7 +223,7 @@ def run_server(cfg: dict) -> None:
 
     click.echo(f"[0xVPN] server  addr={addr}  port={port}/udp")
 
-    clients: dict[str, tuple] = {}
+    clients: dict = {}
     lock = threading.Lock()
     stop = threading.Event()
 
@@ -308,6 +305,36 @@ def run_client(cfg: dict) -> None:
         click.echo("\n[0xVPN] disconnected")
 
 
+# ── interactive setup ─────────────────────────────────────────────────────────
+
+def interactive_setup(config_path: Path) -> None:
+    """Prompt the user for server details and write a client.toml."""
+    click.echo("\n[0xVPN] No config found. Let's set it up!\n")
+
+    server_ip = click.prompt("  VPS IP address")
+    port      = click.prompt("  Port", default="51820")
+    shared_key = click.prompt("  Shared key (from your server's server.toml)")
+    client_ip  = click.prompt("  Client VPN IP", default="10.0.0.2/24")
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    toml_content = f"""[interface]
+address = "{client_ip}"
+mode    = "client"
+
+[peer]
+endpoint    = "{server_ip}:{port}"
+shared_key  = "{shared_key}"
+allowed_ips = "0.0.0.0/0"
+"""
+
+    config_path.write_text(toml_content)
+    config_path.chmod(0o600)
+
+    click.echo(f"\n  Config saved to {config_path}")
+    click.echo("  Connecting...\n")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 @click.group()
@@ -326,13 +353,14 @@ def start(config: str) -> None:
 
 @cli.command()
 @click.argument("config", required=False)
-def connect(config: str | None) -> None:
+def connect(config: Optional[str]) -> None:
     """Connect as a VPN client."""
     default = Path.home() / ".0xvpn" / "configs" / "client.toml"
     path = Path(config) if config else default
+
     if not path.exists():
-        click.echo(f"[0xVPN] config not found: {path}", err=True)
-        sys.exit(1)
+        interactive_setup(path)
+
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     run_client(cfg)
