@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Install scripts (not needed in image)
+install-linux.sh
+install-macos.sh
+install-windows.ps1
+main.sh
+
+# Docs
+README.md
+LICENSE
+_gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Configs (mounted as volume at runtime)
+configs/*.toml
+
+# Misc
+.DS_Store
+*.log
