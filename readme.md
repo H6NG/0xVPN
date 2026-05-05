@@ -4,7 +4,7 @@ A simple self-hosted VPN over UDP with AES-256-GCM encryption.
 
 ---
 
-## Before / After Image
+## Before / After using 0xVPN
 
 ![img](img/vpn.png)
 
