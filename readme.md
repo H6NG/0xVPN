@@ -4,6 +4,12 @@ A simple self-hosted VPN over UDP with AES-256-GCM encryption.
 
 ---
 
+## Before / After
+
+(/img/vpn.png)
+
+---
+
 ## Server setup (Linux VPS)
 
 First SSH into your VPS:
