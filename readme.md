@@ -4,12 +4,6 @@ A simple self-hosted VPN over UDP with AES-256-GCM encryption.
 
 ---
 
-## Before / After
-
-(/img/vpn.png)
-
----
-
 ## Server setup (Linux VPS)
 
 First SSH into your VPS:
@@ -101,3 +95,10 @@ curl ifconfig.me
 - Requires sudo/admin (TUN interface needs root)
 - DNS is set automatically on connect and restored on disconnect
 - Hit Ctrl+C to disconnect
+
+---
+
+## Before / After Image
+
+![img](img/vpn.png)
+
