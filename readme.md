@@ -18,6 +18,12 @@ Then run the installer:
 curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-linux.sh | bash
 ```
 
+Get your shared key (you'll need it on the client):
+
+```bash
+grep shared_key /opt/0xvpn/configs/server.toml
+```
+
 Then start the server:
 
 ```bash
@@ -25,55 +31,40 @@ cd /opt/0xvpn
 ./venv/bin/python3 setup/cli.py start --config configs/server.toml
 ```
 
-Get your shared key (you'll need it on the client):
-
-```bash
-grep shared_key /opt/0xvpn/configs/server.toml
-```
+> **If you get "Device or resource busy" or "Address already in use"**, kill the old process first:
+> ```bash
+> pkill -f "cli.py start"
+> ip link delete tun0
+> ```
+> Then start the server again.
 
 ---
 
 ## Client setup
 
-### macOS
+### macOS & Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-macos.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-macos.sh)
 ```
 
 Then connect:
 
 ```bash
-cd ~/Downloads/0xVPN/setup
-sudo ./venv/bin/python3 cli.py connect
+0xvpn connect
 ```
 
-### Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/H6NG/0xVPN/main/setup/install-linux.sh | bash
-```
-
-Then connect:
-
-```bash
-cd ~/Downloads/0xVPN/setup
-sudo ./venv/bin/python3 cli.py connect
-```
+It will ask for your VPS IP, port, and shared key on first run.
 
 ### Windows
 
 Run as Administrator in PowerShell:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\install-windows.ps1
-```
-
-Then connect:
-
-```powershell
-cd Downloads\0xVPN\setup
+git clone https://github.com/H6NG/0xVPN.git
+cd 0xVPN\setup
+python -m venv venv
+.\venv\Scripts\pip install -r requirements.txt
 python cli.py connect
 ```
 
@@ -84,9 +75,9 @@ python cli.py connect
 ## Commands
 
 ```bash
-sudo ./venv/bin/python3 cli.py connect      # connect to VPN
-sudo ./venv/bin/python3 cli.py disconnect   # disconnect
-sudo ./venv/bin/python3 cli.py status       # check status
+0xvpn connect      # connect
+0xvpn disconnect   # disconnect
+0xvpn status       # check status
 ```
 
 ---
